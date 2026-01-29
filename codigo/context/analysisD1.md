@@ -1,0 +1,29 @@
+ <context>                                                                                                                                                                                                    
+  Airflow containers are running. We need to verify the new intraday DAG is recognized by the scheduler and check for any import errors.                                                                       
+  </context>                                                                                                                                                                                                   
+                                                                                                                                                                                                               
+  <tasks>                                                                                                                                                                                                      
+  1. **List all recognized DAGs** (filter for market_data):                                                                                                                                                    
+  docker-compose exec airflow-scheduler airflow dags list 2>&1 | grep -E "(dag_id|market_data)"                                                                                                                
+                                                                                                                                                                                                               
+  2. **Check for DAG import errors**:                                                                                                                                                                          
+  docker-compose exec airflow-scheduler airflow dags list-import-errors 2>&1                                                                                                                                   
+                                                                                                                                                                                                               
+  3. **Show DAG details** for the new intraday DAG:                                                                                                                                                            
+  docker-compose exec airflow-scheduler airflow dags show market_data_intraday_update 2>&1 | head -20                                                                                                          
+  </tasks>                                                                                                                                                                                                     
+                                                                                                                                                                                                               
+  <output_format>                                                                                                                                                                                              
+  ## DAG Verification Results                                                                                                                                                                                  
+                                                                                                                                                                                                               
+  | Check | Result |                                                                                                                                                                                           
+  |-------|--------|                                                                                                                                                                                           
+  | DAG listed | [yes/no] |                                                                                                                                                                                    
+  | Import errors | [none/describe] |                                                                                                                                                                          
+  | Task count | [number] |                                                                                                                                                                                    
+                                                                                                                                                                                                               
+  ## Issues Found                                                                                                                                                                                              
+  [List any problems, or "None — ready to test"]                                                                                                                                                               
+  </output_format>                                                                                                                                                                                             
+                                                                                                                                                                                                               
+  Execute each task and provide the summary. 

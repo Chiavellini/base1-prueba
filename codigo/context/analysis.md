@@ -1,0 +1,37 @@
+<context>                                                                                                                                                                                                    
+  You are helping me build a financial data pipeline using Apache Airflow, PostgreSQL, and Yahoo Finance API. The project already has a working structure, and we just added a new DAG that needs testing.     
+  </context>                                                                                                                                                                                                   
+                                                                                                                                                                                                               
+  <objective>                                                                                                                                                                                                  
+  Analyze the current project state and verify that a newly created DAG file is ready for testing.                                                                                                             
+  </objective>                                                                                                                                                                                                 
+                                                                                                                                                                                                               
+  <tasks>                                                                                                                                                                                                      
+  1. **Show project structure** (Python files, DAGs, configs only):                                                                                                                                            
+  find . -maxdepth 3 -type f \( -name "*.py" -o -name "docker-compose*" \) 2>/dev/null | head -30                                                                                                              
+                                                                                                                                                                                                               
+  2. **Confirm the new intraday DAG exists** and show its schedule configuration:                                                                                                                              
+  grep -E "(dag_id|schedule)" dags/market_data/intraday_update.py                                                                                                                                              
+                                                                                                                                                                                                               
+  3. **Check Docker container status**:                                                                                                                                                                        
+  docker ps --format "table {{.Names}}\t{{.Status}}" | head -10                                                                                                                                                
+                                                                                                                                                                                                               
+  4. **If containers are NOT running**, start them:                                                                                                                                                            
+  docker-compose up -d                                                                                                                                                                                         
+  </tasks>                                                                                                                                                                                                     
+                                                                                                                                                                                                               
+  <output_format>                                                                                                                                                                                              
+  After running the commands, summarize:                                                                                                                                                                       
+                                                                                                                                                                                                               
+  ## Project State                                                                                                                                                                                             
+  - Total DAG files found: [count]                                                                                                                                                                             
+  - New intraday DAG: [exists/missing]                                                                                                                                                                         
+  - DAG schedule: [value]                                                                                                                                                                                      
+  - Docker status: [running/stopped]                                                                                                                                                                           
+  - Action taken: [started containers / none needed]                                                                                                                                                           
+                                                                                                                                                                                                               
+  ## Ready for Next Step                                                                                                                                                                                       
+  [Yes/No] — explain any blockers                                                                                                                                                                              
+  </output_format>                                                                                                                                                                                             
+                                                                                                                                                                                                               
+  Execute each task and provide the summary. 

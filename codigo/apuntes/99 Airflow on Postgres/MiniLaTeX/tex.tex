@@ -1,0 +1,193 @@
+\documentclass[12pt,a4paper]{article} % Compile with lualatex or xelatex
+
+\usepackage[margin=1.25in]{geometry}
+\usepackage{amsmath, amssymb, amsthm, mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+\usepackage{bm}
+\usepackage{microtype}
+\usepackage{relsize}
+\usepackage{nicefrac}
+\usepackage{siunitx}
+\usepackage{tcolorbox}
+
+
+\usepackage{fontspec}
+\setmainfont{EB Garamond}[
+    UprightFont = * Regular,
+    ItalicFont = * Italic,
+    BoldFont = * SemiBold,
+    BoldItalicFont = * SemiBold Italic,
+]
+
+% --- Spacing ---
+\usepackage{setspace}
+\setstretch{1.2}
+\setlength{\parskip}{0.2em}
+
+% --- Simple header ---
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+% put the section name
+\fancyhead[L]{\small\textsc{Right-Censored Regression for IBD}}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0pt}
+
+
+% --- Spacing ---
+\usepackage{setspace}
+\setstretch{1.25}
+\setlength{\parskip}{0.2em}
+
+\title{Right-Censored Regression for IBD with 9-Fold CatBoost and XGBoost Stacking:\\
+A Practical Tobit-Corrected Ensemble}
+\author{}
+\date{}
+
+\newtheorem{definition}{Definition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+
+% Shortcuts
+\DeclareMathOperator{\E}{\mathbb{E}}
+\DeclareMathOperator{\Var}{\mathbb{V}\mathrm{ar}}
+\DeclareMathOperator{\1}{\mathbb{I}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\ph}{\varphi}
+\newcommand{\Ph}{\Phi}
+\newcommand{\Normal}{\mathcal{N}}
+\newcommand{\corr}{\mathrm{Corr}}
+\newcommand{\MAD}{\mathrm{MAD}}
+\newcommand{\CB}{\textsc{CatBoost}}
+\newcommand{\XGB}{\textsc{XGBoost}}
+
+
+
+
+
+\begin{document}
+\thispagestyle{empty}
+\vspace*{-5em}
+\begin{center}
+  \LARGE\textbf{Using Postgres on Airflow for Scalable Data Workflows}\\[1em]
+\end{center}
+
+\begin{abstract}
+This document analyzes the choice of database backend for Apache Airflow's metadata database, focusing on PostgreSQL, MySQL/MariaDB, and SQLite. We evaluate each option based on concurrency, availability, feature coverage, and operational risk. The analysis highlights PostgreSQL's strengths in MVCC and lock handling, making it the preferred choice for production deployments with multiple schedulers. MySQL/MariaDB can be viable with recent versions and proper configuration, while SQLite is limited to development use. The document provides practical recommendations for selecting and configuring the metadata database to ensure reliable and efficient Airflow operations.
+\end{abstract}
+
+\newpage
+\section*{Glossary}
+\begin{description}
+  \item[Metadata DB] Airflow's operational database storing DAGs, task instances, XComs, jobs, pools, and scheduler state.
+  \item[MVCC] Multi-Version Concurrency Control; readers do not block writers and vice versa.
+  \item[SKIP LOCKED] SQL clause to avoid blocking when a row is locked; used for task claiming.
+  \item[HA] High availability; multiple schedulers and webservers sharing the same metadata DB.
+\end{description}
+
+\section{Problem and Notation}
+Goal: choose a database backend $D \in \{\text{PostgreSQL}, \text{MySQL/MariaDB}, \text{SQLite}\}$ to minimize failures and latency for Airflow schedulers.
+Let:
+\[
+\begin{aligned}
+C(D) &: \text{concurrency support (rows/sec without deadlock)}\\
+A(D) &: \text{availability under multiple schedulers}\\
+F(D) &: \text{feature coverage of Airflow migrations}\\
+R(D) &: \text{operational risk (lower is better)}.
+\end{aligned}
+\]
+Production constraint: Airflow requires an external DB; SQLite is for testing only. :contentReference[oaicite:1]{index=1}
+
+\section{Theoretical Frame and Rival Models}
+\textbf{Model 1 (PostgreSQL/MVCC)}: Strong MVCC, robust \texttt{SELECT ... FOR UPDATE SKIP LOCKED}, mature JSONB, transactional DDL. Fits Airflow’s locking pattern for task picking. \\
+\textbf{Model 2 (MySQL/MariaDB/InnoDB)}: Adequate MVCC; \texttt{SKIP LOCKED} arrived late in MariaDB (10.6+). Past deadlocks with multiple schedulers if missing. \\
+\textbf{Model 3 (SQLite)}: File-based, single-writer, no HA; intended for local dev. \\
+\textbf{Note on SQL Server}: Backend support removed in Airflow 2.9.0. Not an option for the metadata DB. :contentReference[oaicite:2]{index=2}
+
+\section{Mechanism}
+Airflow schedulers claim ready tasks using row-level locks:
+\[
+\texttt{SELECT ... FOR UPDATE SKIP LOCKED}
+\]
+This requires backend support for \texttt{SKIP LOCKED/NOWAIT} to avoid head-of-line blocking and deadlocks when multiple schedulers run. PostgreSQL provides this reliably; MariaDB needed 10.6+; otherwise HA schedulers are not supported. :contentReference[oaicite:3]{index=3}
+
+\section{Cross-Disciplinary Mapping}
+\textbf{DB theory} $\rightarrow$ MVCC and lock semantics.  
+\textbf{Distributed systems} $\rightarrow$ Leaderless workers competing for tasks need non-blocking locks.  
+\textbf{Queueing} $\rightarrow$ \texttt{SKIP LOCKED} reduces service time variance by bypassing blocked rows.
+
+\section{Thesis–Antithesis–Synthesis}
+\textbf{Thesis}: PostgreSQL maximizes scheduler throughput and minimizes deadlock risk for Airflow.  
+\textbf{Antithesis}: MySQL/MariaDB can match performance if configured on recent versions with correct isolation and SQL features.  
+\textbf{Synthesis}: Prefer PostgreSQL by default; choose MySQL/MariaDB only with version/feature checks and load testing. SQLite remains dev-only. :contentReference[oaicite:4]{index=4}
+
+\section{Operational Summary: Pros and Cons by Backend}
+\subsection*{PostgreSQL}
+\textbf{Advantages}
+\begin{itemize}
+  \item First-class support and community recommendation for Airflow; widely used in managed Airflow. :contentReference[oaicite:5]{index=5}
+  \item Robust \texttt{SKIP LOCKED} and MVCC; stable with multiple schedulers. :contentReference[oaicite:6]{index=6}
+  \item Strong JSONB, transactional DDL, extensions.
+\end{itemize}
+\textbf{Disadvantages}
+\begin{itemize}
+  \item Slightly more operational complexity than SQLite.
+  \item Requires tuned VACUUM/autovacuum for heavy XCom churn.
+\end{itemize}
+
+\subsection*{MySQL / MariaDB}
+\textbf{Advantages}
+\begin{itemize}
+  \item Supported for Airflow production backends. :contentReference[oaicite:7]{index=7}
+  \item Familiar to many ops teams; broad tooling.
+\end{itemize}
+\textbf{Disadvantages}
+\begin{itemize}
+  \item MariaDB prior to 10.6 lacks \texttt{SKIP LOCKED}; multiple schedulers not supported and deadlocks reported. :contentReference[oaicite:8]{index=8}
+  \item Behavior differences around locking and migrations can require extra tuning; several teams migrated to PostgreSQL after issues. :contentReference[oaicite:9]{index=9}
+\end{itemize}
+
+\subsection*{SQLite}
+\textbf{Advantages}
+\begin{itemize}
+  \item Zero setup; default for quick testing. :contentReference[oaicite:10]{index=10}
+\end{itemize}
+\textbf{Disadvantages}
+\begin{itemize}
+  \item Single-node, single-writer; risk of data loss in production scenarios; no HA. \emph{Use only for development.} :contentReference[oaicite:11]{index=11}
+\end{itemize}
+
+\subsection*{Microsoft SQL Server}
+\textbf{Status}: Backend support removed in Airflow 2.9.0; do not choose for the metadata DB. :contentReference[oaicite:12]{index=12}
+
+\section{Operational Steps / Pseudocode}
+\begin{verbatim}
+if ENV == "dev":
+    use SQLite (default)  # quick tryouts only
+elif ENV in {"staging", "prod"}:
+    prefer PostgreSQL >= 12
+    # ensure:
+    # - shared_buffers, work_mem tuned
+    # - autovacuum aggressive on xcom tables
+    # - connection pooler (pgBouncer) for many webworkers
+else:
+    if choosing MySQL/MariaDB:
+        require MariaDB >= 10.6 or MySQL >= 8.0
+        test SELECT ... FOR UPDATE SKIP LOCKED under load
+\end{verbatim}
+Version and feature checks reflect Airflow’s HA scheduler needs and documented backend support. :contentReference[oaicite:13]{index=13}
+
+\section{Limits, Uncertainty, Predictions}
+\textbf{Limits}: Real performance depends on workload mix, XCom volume, and schema migration cadence.  
+\textbf{Uncertainty}: Benchmarks vary by hardware and Airflow version; change risk increases across major upgrades.  
+\textbf{Prediction}: With multiple schedulers and heavy DAG throughput, PostgreSQL will show fewer lock waits and deadlocks than MariaDB$<$10.6 and equal or better than MySQL 8.0 under identical tuning. Evidence: Airflow docs on lock semantics and community migrations. :contentReference[oaicite:14]{index=14}
+
+\section*{One-line Reference}
+``Good architecture is about choosing defaults that fail safely.'' 
+
+\end{document}

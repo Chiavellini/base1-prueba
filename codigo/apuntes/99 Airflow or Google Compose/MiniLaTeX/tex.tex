@@ -1,0 +1,180 @@
+\documentclass[12pt,a4paper]{article} % Compile with lualatex or xelatex
+
+\usepackage[margin=1.25in]{geometry}
+\usepackage{amsmath, amssymb, amsthm, mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+\usepackage{bm}
+\usepackage{microtype}
+\usepackage{relsize}
+\usepackage{nicefrac}
+\usepackage{siunitx}
+\usepackage{tcolorbox}
+
+
+\usepackage{fontspec}
+\setmainfont{EB Garamond}[
+    UprightFont = * Regular,
+    ItalicFont = * Italic,
+    BoldFont = * SemiBold,
+    BoldItalicFont = * SemiBold Italic,
+]
+
+% --- Spacing ---
+\usepackage{setspace}
+\setstretch{1.2}
+\setlength{\parskip}{0.2em}
+
+% --- Simple header ---
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+% put the section name
+\fancyhead[L]{\small\textsc{Right-Censored Regression for IBD}}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0pt}
+
+
+% --- Spacing ---
+\usepackage{setspace}
+\setstretch{1.25}
+\setlength{\parskip}{0.2em}
+
+\title{Right-Censored Regression for IBD with 9-Fold CatBoost and XGBoost Stacking:\\
+A Practical Tobit-Corrected Ensemble}
+\author{}
+\date{}
+
+\newtheorem{definition}{Definition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+
+% Shortcuts
+\DeclareMathOperator{\E}{\mathbb{E}}
+\DeclareMathOperator{\Var}{\mathbb{V}\mathrm{ar}}
+\DeclareMathOperator{\1}{\mathbb{I}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\ph}{\varphi}
+\newcommand{\Ph}{\Phi}
+\newcommand{\Normal}{\mathcal{N}}
+\newcommand{\corr}{\mathrm{Corr}}
+\newcommand{\MAD}{\mathrm{MAD}}
+\newcommand{\CB}{\textsc{CatBoost}}
+\newcommand{\XGB}{\textsc{XGBoost}}
+
+
+
+
+
+\begin{document}
+\thispagestyle{empty}
+\vspace*{-5em}
+\begin{center}
+  \LARGE\textbf{Using Airflow on Google Cloud Platform (GCP)}\\[1em]
+\end{center}
+
+\begin{abstract}
+This note analyzes hosting Apache Airflow on Google Cloud Platform (GCP) using Cloud Composer, comparing it with AWS Managed Workflows for Apache Airflow (MWAA) and Azure Managed Airflow. We model the utility of each option based on native integrations, operational overhead, upgrade risk, and scalability. Cloud Composer leverages GKE Autopilot for autoscaling compute and Cloud SQL for managed metadata storage, providing first-party integrations with BigQuery, Dataflow, Dataproc, Pub/Sub, Secret Manager, and Vertex~AI. We recommend Cloud Composer for workloads primarily on GCP due to its 99.5\% SLO and reduced ops toil, while AWS MWAA or Azure Managed Airflow may be preferable when data and teams are already entrenched in those clouds.
+\end{abstract}
+
+\newpage
+\section*{Glossary}
+\begin{description}
+  \item[Cloud Composer] Google Cloud's managed Apache Airflow service.
+  \item[GKE Autopilot] Managed Kubernetes mode that autoschedules nodes per pod demand.
+  \item[PSC] Private Service Connect; private, VPC-scoped service endpoints.
+  \item[SLO] Service Level Objective; monthly uptime target.
+\end{description}
+
+\section{Problem and Notation}
+Choose a cloud $c\in\{\text{GCP},\text{AWS},\text{Azure}\}$ to host Airflow with minimal ops load and maximal integration.
+Let
+\[
+U(c)=\alpha\,I(c)-\beta\,O(c)-\gamma\,R(c)+\delta\,S(c),
+\]
+where $I$=native integrations, $O$=ops overhead, $R$=risk from upgrades/security, $S$=scalability.
+
+\section{Theoretical Frame and Rivals}
+\textbf{GCP:} Cloud Composer is a fully managed Airflow with first-party hooks to BigQuery, Dataflow, Dataproc, GCS, Pub/Sub, Secret Manager, Vertex~AI, and Monitoring. \cite{gcp-overview,gcp-integrations,gcp-monitoring,gcp-secret} \\
+\textbf{AWS:} Amazon MWAA is managed Airflow integrated with S3, EMR, Glue, Redshift, etc. \cite{aws-mwaa-docs,aws-mwaa-pricing} \\
+\textbf{Azure:} Managed Airflow via Azure Data Factory’s Airflow runtime, integrated with Azure services. \cite{azure-adf-maf,azure-adf-airflow-prov}
+
+\section{Mechanism}
+Composer~2/3 architecture: Airflow webserver, scheduler, and workers run on GKE Autopilot; the metadata DB is Cloud~SQL for PostgreSQL; connectivity uses Cloud~SQL Proxy or PSC. This yields elastic compute, managed Postgres, and private networking. \cite{gcp-arch-en, gcp-arch-es}
+
+\section{Cross-Disciplinary Mapping}
+Distributed systems $\to$ autoscaling workers on GKE Autopilot.  
+DB systems $\to$ managed Cloud~SQL reduces stateful ops toil.  
+SecOps $\to$ IAM, Secret Manager, private endpoints, Monitoring. \cite{gcp-secret,gcp-monitoring}
+
+\section{Thesis–Antithesis–Synthesis}
+\textbf{Thesis:} GCP maximizes $I$ and $S$ while minimizing $O$ via Composer+GKE Autopilot and Cloud~SQL. \cite{gcp-overview,gcp-arch-en} \\
+\textbf{Antithesis:} AWS MWAA or Azure Managed Airflow provide similar primitives if your data gravity is there. \cite{aws-mwaa-docs,azure-adf-maf} \\
+\textbf{Synthesis:} Prefer Composer when workloads lean on BigQuery, Dataflow, Dataproc, GCS, Pub/Sub, or you want a 99.5\% SLO without cluster management. Use the provider native service where your data and teams already live. \cite{gcp-overview,gcp-sla}
+
+\section{Pros/Cons Summary for Composer (GCP)}
+\subsection*{Advantages}
+\begin{itemize}
+  \item Fully managed Airflow with version matrix and automated releases. \cite{gcp-versioning,gcp-release}
+  \item Autoscaling on GKE Autopilot; environment sizing controls throughput. \cite{gcp-autoscale}
+  \item Cloud~SQL PostgreSQL metadata DB, private access via Proxy/PSC. \cite{gcp-arch-en}
+  \item First-party integrations (BigQuery, Dataflow, Dataproc, Pub/Sub, Secret Manager, Vertex~AI) and Cloud Monitoring. \cite{gcp-integrations,gcp-secret,gcp-monitoring}
+  \item Published 99.5\% SLO. \cite{gcp-sla}
+\end{itemize}
+\subsection*{Disadvantages}
+\begin{itemize}
+  \item Environment fee and baseline cost; pricing is per-hour plus resources. \cite{gcp-pricing}
+  \item Less control than self-managed clusters; Airflow image and upgrades follow Composer constraints. \cite{gcp-versioning}
+  \item Cross-cloud egress charges if orchestrating non-GCP data planes.
+\end{itemize}
+
+\section{Contrast With AWS MWAA and Azure Managed Airflow}
+\begin{itemize}
+  \item \textbf{AWS MWAA}: Strong if data sits in S3/EMR/Glue/Redshift; pricing is environment-time plus autoscaling. \cite{aws-mwaa-pricing,aws-mwaa-docs}
+  \item \textbf{Azure Managed Airflow}: Good fit with ADF pipelines and Azure services; integrates with Azure identity. \cite{azure-adf-maf,azure-adf-airflow-prov}
+\end{itemize}
+
+\section{Operational Steps}
+\begin{enumerate}
+  \item Choose Composer~2/3 and region near data. \cite{gcp-overview}
+  \item Enable private environment, Secret Manager, and VPC egress controls. \cite{gcp-secret,gcp-arch-en}
+  \item Pin Airflow providers and test with Composer’s supported versions. \cite{gcp-versioning}
+  \item Size environment and verify autoscaling under peak DAG loads. \cite{gcp-autoscale}
+  \item Export metrics to Cloud Monitoring dashboards and set SLO alerts. \cite{gcp-monitoring,gcp-sla}
+\end{enumerate}
+
+\section{Limits, Uncertainty, Predictions}
+Costs vary with worker minutes, storage, and DB size; model with the pricing guide. Network egress dominates for multi-cloud orchestration. Expect Composer to reduce MTTR and ops toil compared with DIY GKE or VMs.
+
+\begin{quote}\small
+``Choose where your data lives; orchestration follows.'' 
+\end{quote}
+
+\section*{Boxed Recap}
+\[
+\boxed{
+\text{If your data plane is on GCP, pick Composer: } U(\mathrm{GCP})\uparrow \text{ via } I\!\uparrow, S\!\uparrow, O\!\downarrow \text{ and a 99.5\% SLO.}
+}
+\]
+
+\begin{thebibliography}{9}\setlength{\itemsep}{2pt}
+\bibitem{gcp-overview} Cloud Composer overview, Google Cloud Docs, accessed Nov.\ 3, 2025. \href{https://cloud.google.com/composer}{Link}. \cite{turn0search0,turn0search8}
+\bibitem{gcp-arch-en} Environment architecture (Composer~2), Google Cloud Docs, accessed Nov.\ 3, 2025. \cite{turn0search1}
+\bibitem{gcp-arch-es} Arquitectura del entorno, Google Cloud Docs, accessed Nov.\ 3, 2025. \cite{turn0search9}
+\bibitem{gcp-versioning} Composer versioning and supported Airflow versions, Google Cloud Docs, accessed Nov.\ 3, 2025. \cite{turn0search4,turn0search12}
+\bibitem{gcp-pricing} Cloud Composer pricing, Google Cloud Docs, accessed Nov.\ 3, 2025. \cite{turn0search5}
+\bibitem{gcp-sla} Cloud Composer SLO 99.5\%, Google Cloud Docs, May 9, 2022. \cite{turn0search7}
+\bibitem{gcp-integrations} Running Dataflow/Dataproc/BigQuery and multi-cloud DAGs from Composer, Google Cloud Docs, accessed Nov.\ 3, 2025. \cite{turn0search6}
+\bibitem{gcp-monitoring} Cloud Monitoring integration for Composer, Google Cloud Docs, accessed Nov.\ 3, 2025. \cite{turn0search14}
+\bibitem{gcp-autoscale} Scale environments in Composer~2, Google Cloud Docs, accessed Nov.\ 3, 2025. \cite{turn0search19}
+\bibitem{aws-mwaa-docs} Amazon MWAA documentation, accessed Nov.\ 3, 2025. \cite{turn0search10}
+\bibitem{aws-mwaa-pricing} Amazon MWAA pricing, accessed Nov.\ 3, 2025. \cite{turn0search2}
+\bibitem{azure-adf-maf} Managed Airflow in Azure Data Factory, Microsoft TechCommunity, accessed Nov.\ 3, 2025. \cite{turn0search3}
+\bibitem{azure-adf-airflow-prov} Airflow Azure provider docs (ADF connections), accessed Nov.\ 3, 2025. \cite{turn0search18}
+\end{thebibliography}
+
+\end{document}
