@@ -1,122 +1,125 @@
-# Financial Data Pipeline
+# Pipeline de Datos Financieros
+Recolección automatizada de precios de acciones para 153 tickers utilizando **Apache Airflow** y **PostgreSQL**.
 
-Automated stock price collection for 153 tickers using Apache Airflow and PostgreSQL.
+---
 
-## 1. Install Required Software
+## 0. Clonar desde GitHub
+Si estás descargando este proyecto desde GitHub:
 
-Two programs need to be installed:
-
-**1. Docker Desktop** (runs the project)
-- Download: https://www.docker.com/products/docker-desktop/
-- Install and open it
-- Wait until the whale icon in the menu bar stops animating
-
-**2. TablePlus** (view your data — optional but recommended)
-- Download: https://tableplus.com/download
-- Install it (free version works fine)
-
-## 2. Run the Project
-
-Open Terminal and run these commands one at a time:
-
-**Step 1** — Go to the project folder:
+**Paso 1 —** Abre la terminal y clona el repositorio:
 ```bash
-cd /path/to/your/project/folder
+git clone https://github.com/Chiavellini/base1-prueba.git
 ```
-*(replace with your actual project path)*
 
-**Step 2** — Build the Docker image (takes 2-5 minutes):
+**Paso 2 —** Entra en la carpeta del proyecto:
+```bash
+cd base1-prueba/codigo
+```
+Luego, continúa con la **Sección 1** a continuación.
+
+---
+
+## 1. Instalar el Software Necesario
+Es necesario instalar dos programas:
+
+1. **Docker Desktop** (ejecuta el proyecto)
+   * Descarga: [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/)
+   * Instálalo y ábrelo.
+   * Espera hasta que el icono de la ballena en la barra de menú deje de moverse.
+
+2. **TablePlus** (para ver tus datos — opcional pero recomendado)
+   * Descarga: [https://tableplus.com/download](https://tableplus.com/download)
+   * Instálalo (la versión gratuita funciona perfectamente).
+
+---
+
+## 2. Ejecutar el Proyecto
+Abre la terminal y ejecuta estos comandos uno a la vez:
+
+**Paso 1 —** Ve a la carpeta del proyecto (omite este paso si acabas de clonar):
+```bash
+cd /ruta/a/tu/carpeta/del/proyecto
+```
+
+**Paso 2 —** Construye la imagen de Docker (tarda de 2 a 5 minutos):
 ```bash
 docker build -t extending-airflow:3.1.1 .
 ```
 
-**Step 3** — Start the project:
+**Paso 3 —** Inicia el proyecto:
 ```bash
 docker-compose up -d
 ```
 
-**Step 4** — Wait 2 minutes, then check it's running:
+**Paso 4 —** Espera 2 minutos y verifica que esté funcionando:
 ```bash
 docker ps
 ```
+Deberías ver **6 contenedores**. Espera hasta que la columna `STATUS` muestre **"healthy"** en todos.
 
-You should see 6 containers. Wait until STATUS shows "healthy" for all.
+---
 
-## 3. Initial Setup (First Time Only)
+## 3. Configuración Inicial (Solo la primera vez)
+Estos pasos crean las tablas y cargan 1 año de datos históricos. Esto se hace **una sola vez**. Después de esto, todo es automático.
 
-These steps create tables and load 1 year of historical data. **You only do this once, ever.** After this, everything is automatic.
+**Paso 1 —** Abre Airflow en tu navegador:
+* **URL:** `http://localhost:8080`
+* **Usuario:** `airflow`
+* **Contraseña:** `airflow`
 
-**Step 1** — Open Airflow in your browser:
-- URL: http://localhost:8080
-- Username: `airflow`
-- Password: `airflow`
+**Paso 2 —** Ejecuta los DAGs de configuración:
+1. Busca `market_data_create_wide` en la lista.
+2. Haz clic en el botón de **Play** a la derecha.
+3. Selecciona **Single run**.
+4. Haz clic en **Trigger**.
+5. Repite el proceso para `market_data_create_adjusted`.
+6. Espera a que ambos terminen (círculo verde = éxito, tarda 5-10 minutos).
 
-**Step 2** — Trigger the setup DAGs:
-- Find `market_data_create_wide` in the list
-- Click the **play button** on the right
-- Select **Single run**
-- Click **Trigger**
-- Repeat for `market_data_create_adjusted`
-- Wait for both to finish (green circle = success, takes 5-10 minutes)
+**Paso 3 —** Activa las actualizaciones automáticas:
+* Busca `market_data_ingest_wide` → Cambia el interruptor a **ON** (azul).
+* Busca `market_data_ingest_adjusted` → Cambia el interruptor a **ON** (azul).
+* Busca `market_data_refresh_adjusted` → Cambia el interruptor a **ON** (azul).
 
-**Step 3** — Enable automatic updates:
-- Find `market_data_ingest_wide` → Toggle switch to **ON** (blue)
-- Find `market_data_ingest_adjusted` → Toggle switch to **ON** (blue)
-- Find `market_data_refresh_adjusted` → Toggle switch to **ON** (blue)
+**¡Listo!** Estos ajustes se guardan permanentemente. No necesitas repetir estos pasos.
 
-**Done!** These settings are saved permanently. You never need to repeat these steps.
+---
 
-## 4. Daily Usage
+## 4. Uso Diario
+Después de la configuración inicial, ejecutar el proyecto es simple:
 
-After initial setup, running the project is simple:
+* **Iniciar:** `docker-compose up -d`
+* **Detener:** `docker-compose stop`
 
-**Start:**
-```bash
-docker-compose up -d
-```
+Eso es todo. No requiere pasos manuales. Los DAGs actualizan los precios automáticamente cada minuto durante el horario de mercado (Lun-Vie, 8:30 AM - 3:00 PM Ciudad de México).
 
-**Stop:**
-```bash
-docker-compose stop
-```
+---
 
-That's it. No manual steps needed. The DAGs automatically update prices every minute during market hours (Mon-Fri, 8:30 AM - 3:00 PM Mexico City).
+## 5. Ver tus Datos en TablePlus
+1. **Abrir TablePlus.**
+2. **Crear una nueva conexión:** Haz clic en *Create a new connection* (o `Cmd+N`) y selecciona **PostgreSQL**.
+3. **Ingresa estos ajustes EXACTAMENTE:**
 
-## 5. View Your Data in TablePlus
+| Campo | Valor |
+| :--- | :--- |
+| **Name** | Market Data (o cualquier nombre) |
+| **Host** | `localhost` |
+| **Port** | `5434` (**¡NO el 5432!**) |
+| **User** | `airflow` |
+| **Password** | `airflow` |
+| **Database** | `airflow` |
 
-**Step 1** — Open TablePlus
+4. **Prueba y conecta:** Haz clic en **Test** (debe decir "OK") y luego en **Connect**.
+5. **Busca tus tablas:** En la barra lateral izquierda (inferior), cambia el esquema de `public` a `market_data`. Verás 6 tablas con los datos.
 
-**Step 2** — Create a new connection:
-- Click **Create a new connection** (or press Cmd+N)
-- Select **PostgreSQL**
+---
 
-**Step 3** — Enter these settings EXACTLY:
+## 6. Solución de Problemas
 
-| Field | Value |
-|-------|-------|
-| Name | Market Data (or anything) |
-| Host | localhost |
-| Port | **5434** (NOT 5432!) |
-| User | airflow |
-| Password | airflow |
-| Database | airflow |
-
-**Step 4** — Test and connect:
-- Click **Test** (should show "OK")
-- Click **Connect**
-
-**Step 5** — Find your tables:
-- In the left sidebar, find the dropdown that says `public`
-- Change it to **`market_data`**
-- You will see 6 tables with your stock data
-
-## 6. Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| "Cannot connect to Docker daemon" | Open Docker Desktop and wait 30 seconds |
-| Containers not showing "healthy" | Wait 2-3 minutes, Docker is starting up |
-| Tables are empty in TablePlus | Trigger `market_data_create_wide` DAG in Airflow UI |
-| Can't connect to port 5434 | Run `docker ps` to check containers are running |
-| "repository does not exist" error | Run `docker build -t extending-airflow:3.1.1 .` |
-| DAGs not updating prices | Check they are unpaused (toggle ON) in Airflow UI |
+| Problema | Solución |
+| :--- | :--- |
+| "Cannot connect to Docker daemon" | Abre Docker Desktop y espera 30 segundos. |
+| Los contenedores no muestran "healthy" | Espera 2-3 minutos; Docker se está iniciando. |
+| Las tablas están vacías en TablePlus | Ejecuta el DAG `market_data_create_wide` en Airflow. |
+| No puedo conectar al puerto 5434 | Ejecuta `docker ps` para ver si los contenedores corren. |
+| Error "repository does not exist" | Ejecuta `docker build -t extending-airflow:3.1.1 .` |
+| Los DAGs no actualizan precios | Verifica que estén en **ON** (unpaused) en Airflow. |
