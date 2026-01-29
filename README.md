@@ -40,11 +40,11 @@ docker-compose up -d
 docker ps
 ```
 
-You should see 7 containers. Wait until STATUS shows "healthy" for all.
+You should see 6 containers. Wait until STATUS shows "healthy" for all.
 
 ## 3. Initial Setup (First Time Only)
 
-These steps create the database tables and load 1 year of historical data. You only need to do this once.
+These steps create tables and load 1 year of historical data. **You only do this once, ever.** After this, everything is automatic.
 
 **Step 1** — Open Airflow in your browser:
 - URL: http://localhost:8080
@@ -54,34 +54,33 @@ These steps create the database tables and load 1 year of historical data. You o
 **Step 2** — Trigger the setup DAGs:
 - Find `market_data_create_wide` in the list
 - Click the **play button** on the right
-- Click **Trigger DAG**
+- Select **Single run**
+- Click **Trigger**
 - Repeat for `market_data_create_adjusted`
 - Wait for both to finish (green circle = success, takes 5-10 minutes)
 
 **Step 3** — Enable automatic updates:
-- Find `market_data_ingest_wide` in the list
-- Toggle the switch to **ON** (blue)
-- Repeat for `market_data_ingest_adjusted`
+- Find `market_data_ingest_wide` → Toggle switch to **ON** (blue)
+- Find `market_data_ingest_adjusted` → Toggle switch to **ON** (blue)
+- Find `market_data_refresh_adjusted` → Toggle switch to **ON** (blue)
 
-Done! From now on, prices update automatically every minute during market hours.
+**Done!** These settings are saved permanently. You never need to repeat these steps.
 
-## 4. After Initial Setup (Normal Usage)
+## 4. Daily Usage
 
-Once you've completed the initial setup, you never need to do it again.
+After initial setup, running the project is simple:
 
-**To start the project:**
+**Start:**
 ```bash
 docker-compose up -d
 ```
 
-The ingest DAGs will automatically resume updating prices during market hours (Mon-Fri, 8:30 AM - 3:00 PM Mexico City). No manual steps needed.
-
-**To stop the project:**
+**Stop:**
 ```bash
 docker-compose stop
 ```
 
-Your data is saved. The project will continue where it left off when you start it again.
+That's it. No manual steps needed. The DAGs automatically update prices every minute during market hours (Mon-Fri, 8:30 AM - 3:00 PM Mexico City).
 
 ## 5. View Your Data in TablePlus
 
@@ -121,32 +120,3 @@ Your data is saved. The project will continue where it left off when you start i
 | Can't connect to port 5434 | Run `docker ps` to check containers are running |
 | "repository does not exist" error | Run `docker build -t extending-airflow:3.1.1 .` |
 | DAGs not updating prices | Check they are unpaused (toggle ON) in Airflow UI |
-| Tables disappeared after renaming/moving folder | See Section 7 below |
-
-## 7. Recovering Data After Renaming the Project Folder
-
-If you rename or move the project folder, your tables may appear empty. The data is NOT lost — it's still in the old Docker volume.
-
-**Step 1** — Find the old volume:
-```bash
-docker volume ls
-```
-Look for a volume with your **old folder name**, like `old-folder-name_postgres-db-volume`.
-
-**Step 2** — Copy the data to the current volume:
-```bash
-docker-compose stop
-```
-```bash
-docker run --rm \
-  -v OLD_VOLUME_NAME:/source:ro \
-  -v airflow_market_data_postgres:/dest \
-  alpine sh -c "cp -av /source/. /dest/"
-```
-Replace `OLD_VOLUME_NAME` with the actual name from Step 1.
-
-**Step 3** — Restart and verify:
-```bash
-docker-compose up -d
-```
-Wait 2 minutes, then check your tables in TablePlus. All data should be back.

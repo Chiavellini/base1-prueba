@@ -189,6 +189,10 @@ services:
 
   airflow-worker:
     <<: *airflow-common
+    # NOTE: Disabled by profile - LocalExecutor runs tasks in the scheduler, no worker needed.
+    # To use CeleryExecutor, install apache-airflow-providers-celery and use --profile celery
+    profiles:
+      - celery
     command: celery worker
     healthcheck:
       # yamllint disable rule:line-length
