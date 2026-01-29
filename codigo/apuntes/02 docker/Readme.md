@@ -1,1 +1,0 @@
-No entendia muchas cosas del template, entonces aprendo desde 0 docker para hacer el mio! 
