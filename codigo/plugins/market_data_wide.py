@@ -1089,3 +1089,12 @@ def backfill_low_prices_from_yahoo(
 ) -> dict[str, Any]:
     """Backfill historical daily low prices from Yahoo Finance."""
     return _backfill_wide_from_yahoo("low_prices", "Low", period, postgres_conn_id, database)
+
+
+def backfill_closing_prices_from_yahoo(
+    period: str = "1y",
+    postgres_conn_id: str = "postgres_default",
+    database: str = "airflow",
+) -> dict[str, Any]:
+    """Backfill historical daily closing prices from Yahoo Finance."""
+    return _backfill_wide_from_yahoo("closing_prices", "Close", period, postgres_conn_id, database)

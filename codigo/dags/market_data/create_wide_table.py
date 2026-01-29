@@ -29,7 +29,7 @@ from plugins.market_data_wide import (
     generate_closing_prices_ddl,
     generate_high_prices_ddl,
     generate_low_prices_ddl,
-    backfill_from_existing_tables,
+    backfill_closing_prices_from_yahoo,
     backfill_high_prices_from_yahoo,
     backfill_low_prices_from_yahoo,
     get_closing_prices_stats,
@@ -80,8 +80,9 @@ def create_low_task(**context):
 
 
 def backfill_closing_task(**context):
-    """Backfill closing_prices from existing per-ticker tables."""
-    result = backfill_from_existing_tables(
+    """Backfill closing_prices from Yahoo Finance (1 year)."""
+    result = backfill_closing_prices_from_yahoo(
+        period="1y",
         postgres_conn_id="postgres_default",
         database="airflow",
     )
@@ -152,7 +153,7 @@ with DAG(
     )
 
     backfill_closing = PythonOperator(
-        task_id="backfill_from_existing_tables",
+        task_id="backfill_closing_prices",
         python_callable=backfill_closing_task,
         execution_timeout=timedelta(minutes=20),
     )
