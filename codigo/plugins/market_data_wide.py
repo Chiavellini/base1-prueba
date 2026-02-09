@@ -1098,3 +1098,299 @@ def backfill_closing_prices_from_yahoo(
 ) -> dict[str, Any]:
     """Backfill historical daily closing prices from Yahoo Finance."""
     return _backfill_wide_from_yahoo("closing_prices", "Close", period, postgres_conn_id, database)
+
+
+# =============================================================================
+# 12) GAP DETECTION AND BACKFILL FUNCTIONS
+# =============================================================================
+
+def get_trading_days_from_yahoo(days_back: int = 30) -> list[date]:
+    """
+    Download SPY data for last N days to get valid trading days.
+    SPY is used as a proxy for market open days.
+
+    Args:
+        days_back: Number of trading days to look back
+
+    Returns:
+        List of date objects representing valid trading days
+    """
+    import yfinance as yf
+    from datetime import timedelta
+
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days_back + 10)  # Extra buffer for weekends/holidays
+
+    try:
+        data = yf.download("SPY", start=start, end=end, progress=False)
+    except Exception as e:
+        print(f"[get_trading_days] Failed to download SPY data: {e}")
+        return []
+
+    if data.empty:
+        print("[get_trading_days] No SPY data returned")
+        return []
+
+    trading_days = [d.date() for d in data.index]
+    # Return only the last N days
+    result = sorted(trading_days)[-days_back:] if len(trading_days) > days_back else sorted(trading_days)
+    print(f"[get_trading_days] Found {len(result)} trading days in last {days_back} days")
+    return result
+
+
+def get_existing_dates_wide(
+    table_name: str,
+    days_back: int = 30,
+    postgres_conn_id: str = "postgres_default",
+    database: str = "airflow",
+) -> list[date]:
+    """
+    Get dates that exist in the specified wide table for the last N days.
+
+    Args:
+        table_name: Name of the wide table (e.g., 'closing_prices')
+        days_back: Number of days to look back
+        postgres_conn_id: Airflow connection ID
+        database: Database name
+
+    Returns:
+        List of date objects that exist in the table
+    """
+    from datetime import timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).date()
+
+    hook = PostgresHook(postgres_conn_id=postgres_conn_id, database=database)
+    with hook.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT DISTINCT date FROM market_data.{table_name} WHERE date >= %s ORDER BY date",
+                (cutoff,)
+            )
+            dates = [row[0] for row in cur.fetchall()]
+
+    print(f"[get_existing_dates] Found {len(dates)} existing dates in {table_name}")
+    return dates
+
+
+def find_missing_dates_wide(
+    table_name: str,
+    days_back: int = 30,
+    postgres_conn_id: str = "postgres_default",
+    database: str = "airflow",
+) -> list[date]:
+    """
+    Compare trading days vs existing dates, return missing dates.
+
+    Args:
+        table_name: Name of the wide table
+        days_back: Number of days to look back
+        postgres_conn_id: Airflow connection ID
+        database: Database name
+
+    Returns:
+        List of missing date objects
+    """
+    trading_days = get_trading_days_from_yahoo(days_back)
+    existing_dates = get_existing_dates_wide(table_name, days_back, postgres_conn_id, database)
+
+    existing_set = set(existing_dates)
+    missing = [d for d in trading_days if d not in existing_set]
+
+    print(f"[find_missing] {table_name}: Trading days={len(trading_days)}, "
+          f"Existing={len(existing_dates)}, Missing={len(missing)}")
+
+    if missing:
+        print(f"[find_missing] {table_name}: Missing dates: {missing}")
+
+    return missing
+
+
+def backfill_missing_dates_wide(
+    table_name: str,
+    price_column: str,
+    missing_dates: list[date],
+    postgres_conn_id: str = "postgres_default",
+    database: str = "airflow",
+) -> dict[str, Any]:
+    """
+    Download data for only the missing dates and insert into table.
+
+    Args:
+        table_name: Target table name (e.g., 'closing_prices')
+        price_column: Yahoo Finance column to extract ('Close', 'High', 'Low')
+        missing_dates: List of dates to backfill
+        postgres_conn_id: Airflow connection ID
+        database: Database name
+
+    Returns:
+        Dict with stats: {rows_inserted, dates_processed}
+    """
+    import yfinance as yf
+    from datetime import timedelta
+    from psycopg2.extras import execute_values
+
+    if not missing_dates:
+        print(f"[backfill_missing] {table_name}: No missing dates to backfill")
+        return {"rows_inserted": 0, "dates_processed": 0}
+
+    print(f"[backfill_missing] {table_name}: Backfilling {len(missing_dates)} dates: {missing_dates}")
+
+    # Download data for the date range covering all missing dates
+    start_date = min(missing_dates) - timedelta(days=1)
+    end_date = max(missing_dates) + timedelta(days=2)
+
+    yf_tickers = [t["yf_ticker"] for t in TICKERS]
+
+    try:
+        data = yf.download(
+            tickers=yf_tickers,
+            start=start_date,
+            end=end_date,
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+        )
+    except Exception as e:
+        print(f"[backfill_missing] {table_name}: Download failed: {e}")
+        return {"rows_inserted": 0, "error": str(e)}
+
+    if data.empty:
+        print(f"[backfill_missing] {table_name}: No data returned from Yahoo")
+        return {"rows_inserted": 0, "error": "empty download"}
+
+    price_data = data[price_column]
+    rows_to_insert = []
+
+    for missing_date in missing_dates:
+        # Find the index matching this date
+        matching_idx = [idx for idx in price_data.index if idx.date() == missing_date]
+        if not matching_idx:
+            print(f"[backfill_missing] {table_name}: No data for {missing_date}")
+            continue
+
+        row_idx = matching_idx[0]
+        row_values: dict[str, Any] = {"date": missing_date}
+
+        for ticker_info in TICKERS:
+            yf_ticker = ticker_info["yf_ticker"]
+            column = ticker_info["column"]
+
+            try:
+                if len(yf_tickers) == 1:
+                    price = price_data.loc[row_idx]
+                else:
+                    price = price_data.loc[row_idx, yf_ticker]
+
+                if pd.notna(price):
+                    row_values[column] = float(price)
+                else:
+                    row_values[column] = None
+            except Exception:
+                row_values[column] = None
+
+        rows_to_insert.append(row_values)
+
+    if not rows_to_insert:
+        print(f"[backfill_missing] {table_name}: No rows to insert")
+        return {"rows_inserted": 0, "dates_processed": 0}
+
+    # Build INSERT with ON CONFLICT DO NOTHING
+    columns_list = ["date"] + TICKER_COLUMNS
+    insert_sql = f"""
+        INSERT INTO market_data.{table_name} ({", ".join(columns_list)})
+        VALUES %s
+        ON CONFLICT (date) DO NOTHING
+    """
+
+    values = [
+        tuple(row.get(col) for col in columns_list)
+        for row in rows_to_insert
+    ]
+
+    hook = PostgresHook(postgres_conn_id=postgres_conn_id, database=database)
+    with hook.get_conn() as conn:
+        with conn.cursor() as cur:
+            execute_values(cur, insert_sql, values, page_size=100)
+            rows_affected = cur.rowcount
+        conn.commit()
+
+    print(f"[backfill_missing] {table_name}: Inserted {rows_affected} rows for {len(rows_to_insert)} dates")
+
+    return {
+        "rows_inserted": rows_affected,
+        "dates_processed": len(rows_to_insert),
+        "dates": [str(d) for d in missing_dates],
+    }
+
+
+def fill_wide_gaps(
+    table_name: str,
+    price_column: str,
+    days_back: int = 30,
+    postgres_conn_id: str = "postgres_default",
+    database: str = "airflow",
+) -> dict[str, Any]:
+    """
+    Find and fill gaps for a single wide table.
+
+    Args:
+        table_name: Target table name
+        price_column: Yahoo Finance column ('Close', 'High', 'Low')
+        days_back: Days to look back for gaps
+        postgres_conn_id: Airflow connection ID
+        database: Database name
+
+    Returns:
+        Dict with results: {missing_count, filled_count, dates}
+    """
+    missing = find_missing_dates_wide(table_name, days_back, postgres_conn_id, database)
+    result = backfill_missing_dates_wide(table_name, price_column, missing, postgres_conn_id, database)
+
+    return {
+        "table": table_name,
+        "missing_count": len(missing),
+        "filled_count": result.get("rows_inserted", 0),
+        "dates": [str(d) for d in missing],
+    }
+
+
+def fill_all_wide_gaps(
+    days_back: int = 30,
+    postgres_conn_id: str = "postgres_default",
+    database: str = "airflow",
+) -> dict[str, Any]:
+    """
+    Find and fill gaps in all three wide tables.
+
+    Args:
+        days_back: Days to look back for gaps
+        postgres_conn_id: Airflow connection ID
+        database: Database name
+
+    Returns:
+        Dict with results for each table
+    """
+    tables = [
+        ("closing_prices", "Close"),
+        ("high_prices", "High"),
+        ("low_prices", "Low"),
+    ]
+
+    results = {}
+    total_missing = 0
+    total_filled = 0
+
+    for table_name, price_column in tables:
+        result = fill_wide_gaps(table_name, price_column, days_back, postgres_conn_id, database)
+        results[table_name] = result
+        total_missing += result["missing_count"]
+        total_filled += result["filled_count"]
+
+    print(f"[fill_all_wide] Summary: {total_missing} total missing dates, {total_filled} rows inserted")
+
+    return {
+        "tables": results,
+        "total_missing": total_missing,
+        "total_filled": total_filled,
+    }

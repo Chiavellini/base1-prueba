@@ -741,3 +741,250 @@ def verify_table_counts(
 
     print(f"[verify] Table counts: {counts}")
     return counts
+
+
+# =============================================================================
+# 11) GAP DETECTION AND BACKFILL FUNCTIONS
+# =============================================================================
+
+def get_trading_days_from_yahoo_adj(days_back: int = 30) -> list:
+    """
+    Download SPY data for last N days to get valid trading days.
+    SPY is used as a proxy for market open days.
+
+    Args:
+        days_back: Number of trading days to look back
+
+    Returns:
+        List of date objects representing valid trading days
+    """
+    import yfinance as yf
+    from datetime import timedelta
+
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days_back + 10)  # Extra buffer for weekends/holidays
+
+    try:
+        data = yf.download("SPY", start=start, end=end, progress=False)
+    except Exception as e:
+        print(f"[get_trading_days_adj] Failed to download SPY data: {e}")
+        return []
+
+    if data.empty:
+        print("[get_trading_days_adj] No SPY data returned")
+        return []
+
+    trading_days = [d.date() for d in data.index]
+    # Return only the last N days
+    result = sorted(trading_days)[-days_back:] if len(trading_days) > days_back else sorted(trading_days)
+    print(f"[get_trading_days_adj] Found {len(result)} trading days in last {days_back} days")
+    return result
+
+
+def get_existing_dates_adjusted(
+    days_back: int = 30,
+    postgres_conn_id: str = "postgres_default",
+    database: str = "airflow",
+) -> list:
+    """
+    Get dates that exist in adjusted_prices for the last N days.
+
+    Args:
+        days_back: Number of days to look back
+        postgres_conn_id: Airflow connection ID
+        database: Database name
+
+    Returns:
+        List of date objects that exist in the table
+    """
+    from datetime import timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).date()
+
+    hook = PostgresHook(postgres_conn_id=postgres_conn_id, database=database)
+    with hook.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT date FROM market_data.adjusted_prices WHERE date >= %s ORDER BY date",
+                (cutoff,)
+            )
+            dates = [row[0] for row in cur.fetchall()]
+
+    print(f"[get_existing_dates_adj] Found {len(dates)} existing dates in adjusted_prices")
+    return dates
+
+
+def find_missing_dates_adjusted(
+    days_back: int = 30,
+    postgres_conn_id: str = "postgres_default",
+    database: str = "airflow",
+) -> list:
+    """
+    Compare trading days vs existing dates in adjusted_prices.
+
+    Args:
+        days_back: Number of days to look back
+        postgres_conn_id: Airflow connection ID
+        database: Database name
+
+    Returns:
+        List of missing date objects
+    """
+    trading_days = get_trading_days_from_yahoo_adj(days_back)
+    existing_dates = get_existing_dates_adjusted(days_back, postgres_conn_id, database)
+
+    existing_set = set(existing_dates)
+    missing = [d for d in trading_days if d not in existing_set]
+
+    print(f"[find_missing_adj] adjusted_prices: Trading days={len(trading_days)}, "
+          f"Existing={len(existing_dates)}, Missing={len(missing)}")
+
+    if missing:
+        print(f"[find_missing_adj] Missing dates: {missing}")
+
+    return missing
+
+
+def backfill_missing_dates_adjusted(
+    missing_dates: list,
+    postgres_conn_id: str = "postgres_default",
+    database: str = "airflow",
+) -> dict[str, Any]:
+    """
+    Download and insert adjusted prices for only the missing dates.
+
+    Args:
+        missing_dates: List of date objects to backfill
+        postgres_conn_id: Airflow connection ID
+        database: Database name
+
+    Returns:
+        Dict with stats: {rows_inserted, dates_processed}
+    """
+    import yfinance as yf
+    from datetime import timedelta
+    from psycopg2.extras import execute_values
+
+    if not missing_dates:
+        print("[backfill_missing_adj] No missing dates to backfill")
+        return {"rows_inserted": 0, "dates_processed": 0}
+
+    print(f"[backfill_missing_adj] Backfilling {len(missing_dates)} dates: {missing_dates}")
+
+    # Get security ID mapping
+    sec_map = get_security_id_map(postgres_conn_id, database)
+    if not sec_map:
+        print("[backfill_missing_adj] No securities found – run populate_securities first")
+        return {"rows_inserted": 0, "error": "no securities"}
+
+    # Download data for the date range
+    start_date = min(missing_dates) - timedelta(days=1)
+    end_date = max(missing_dates) + timedelta(days=2)
+
+    yf_tickers = [t["yf_ticker"] for t in TICKERS]
+
+    try:
+        data = yf.download(
+            tickers=yf_tickers,
+            start=start_date,
+            end=end_date,
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+        )
+    except Exception as e:
+        print(f"[backfill_missing_adj] Download failed: {e}")
+        return {"rows_inserted": 0, "error": str(e)}
+
+    if data.empty:
+        print("[backfill_missing_adj] No data returned from Yahoo")
+        return {"rows_inserted": 0, "error": "empty download"}
+
+    single = len(yf_tickers) == 1
+    close_data = data["Close"]
+    adj_close_data = data["Adj Close"]
+    volume_data = data["Volume"]
+
+    rows_to_insert: list[tuple] = []
+
+    for missing_date in missing_dates:
+        # Find the index matching this date
+        matching_idx = [idx for idx in close_data.index if idx.date() == missing_date]
+        if not matching_idx:
+            print(f"[backfill_missing_adj] No data for {missing_date}")
+            continue
+
+        row_idx = matching_idx[0]
+
+        for t in TICKERS:
+            yf_ticker = t["yf_ticker"]
+            sid = sec_map.get(yf_ticker)
+            if sid is None:
+                continue
+
+            try:
+                raw = float(close_data.loc[row_idx] if single else close_data.loc[row_idx, yf_ticker])
+                adj = float(adj_close_data.loc[row_idx] if single else adj_close_data.loc[row_idx, yf_ticker])
+                vol_val = volume_data.loc[row_idx] if single else volume_data.loc[row_idx, yf_ticker]
+                vol = int(vol_val) if pd.notna(vol_val) else None
+            except Exception:
+                continue
+
+            if pd.isna(raw) or pd.isna(adj) or raw == 0:
+                continue
+
+            factor = adj / raw
+            rows_to_insert.append((sid, missing_date, round(raw, 6), round(factor, 10), round(adj, 6), vol))
+
+    if not rows_to_insert:
+        print("[backfill_missing_adj] No rows to insert")
+        return {"rows_inserted": 0, "dates_processed": 0}
+
+    # Bulk insert
+    hook = PostgresHook(postgres_conn_id=postgres_conn_id, database=database)
+    with hook.get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                INSERT INTO market_data.adjusted_prices
+                    (security_id, date, raw_close, adj_factor, adj_close, volume)
+                VALUES %s
+                ON CONFLICT (security_id, date) DO NOTHING
+            """
+            execute_values(cur, sql, rows_to_insert, page_size=2000)
+            rows_affected = cur.rowcount
+        conn.commit()
+
+    print(f"[backfill_missing_adj] Inserted {rows_affected} rows for {len(missing_dates)} dates")
+
+    return {
+        "rows_inserted": rows_affected,
+        "dates_processed": len(missing_dates),
+        "dates": [str(d) for d in missing_dates],
+    }
+
+
+def fill_adjusted_gaps(
+    days_back: int = 30,
+    postgres_conn_id: str = "postgres_default",
+    database: str = "airflow",
+) -> dict[str, Any]:
+    """
+    Find and fill gaps in adjusted_prices table.
+
+    Args:
+        days_back: Days to look back for gaps
+        postgres_conn_id: Airflow connection ID
+        database: Database name
+
+    Returns:
+        Dict with results: {missing_count, filled_count, dates}
+    """
+    missing = find_missing_dates_adjusted(days_back, postgres_conn_id, database)
+    result = backfill_missing_dates_adjusted(missing, postgres_conn_id, database)
+
+    return {
+        "table": "adjusted_prices",
+        "missing_count": len(missing),
+        "filled_count": result.get("rows_inserted", 0),
+        "dates": [str(d) for d in missing],
+    }
