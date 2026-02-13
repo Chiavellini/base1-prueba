@@ -3,7 +3,14 @@ Muestra: Como conectarte y graficar datos del proyecto Actinver
 ===============================================================
 
 Requisitos:
+    Movernos a la carpeta muestras:
+    cd muestras
+    Crear un entorno virtual:
+    python3 -m venv .venv
+    source .venv/bin/activate
     pip install psycopg2-binary pandas matplotlib
+    pip install sqlalchemy
+
 
 Conexion:
     La base PostgreSQL corre en Docker (ver codigo/docker-compose.yaml).
@@ -17,7 +24,8 @@ from sqlalchemy import create_engine
 
 # ── 1. Conexion a la base de datos ──────────────────────────────────────────
 #    Host: localhost  |  Puerto: 5434  |  DB: airflow  |  User/Pass: airflow
-ENGINE = create_engine("postgresql+psycopg2://airflow:airflow@localhost:5434/airflow")
+ENGINE = create_engine(
+    "postgresql+psycopg2://airflow:airflow@localhost:5434/airflow")
 
 
 # ── 2. Consultas de ejemplo ─────────────────────────────────────────────────
@@ -64,7 +72,8 @@ def slopes(periodos: list[str], ticker: str, dias: int = 252) -> pd.DataFrame:
             ORDER BY date DESC
             LIMIT {dias}
         """
-        partes.append(pd.read_sql(q, ENGINE, parse_dates=["date"]).set_index("date"))
+        partes.append(pd.read_sql(
+            q, ENGINE, parse_dates=["date"]).set_index("date"))
     df = pd.concat(partes, axis=1).sort_index()
     return df
 
@@ -102,7 +111,7 @@ def grafica_precio_volumen():
     df = precios_ajustados("AAPL", dias=252)
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True,
-                                    gridspec_kw={"height_ratios": [3, 1]})
+                                   gridspec_kw={"height_ratios": [3, 1]})
 
     # Panel superior: precio ajustado
     ax1.plot(df.index, df["adj_close"], color="steelblue", linewidth=1.5)
@@ -130,7 +139,8 @@ def grafica_slopes():
     df = slopes(["20d", "50d", "200d"], "aapl", dias=252)
 
     fig, ax = plt.subplots(figsize=(12, 5))
-    colores = {"slope_20d": "tab:green", "slope_50d": "tab:orange", "slope_200d": "tab:red"}
+    colores = {"slope_20d": "tab:green",
+               "slope_50d": "tab:orange", "slope_200d": "tab:red"}
     for col, color in colores.items():
         ax.plot(df.index, df[col], linewidth=1.2, label=col.replace("slope_", "Slope "),
                 color=color)
@@ -160,7 +170,8 @@ def grafica_rango_diario():
         ORDER BY h.date DESC
         LIMIT 60
     """
-    df = pd.read_sql(query, ENGINE, parse_dates=["date"]).sort_values("date").set_index("date")
+    df = pd.read_sql(query, ENGINE, parse_dates=["date"]).sort_values(
+        "date").set_index("date")
     df["rango"] = df["high"] - df["low"]
 
     fig, ax = plt.subplots(figsize=(12, 5))
